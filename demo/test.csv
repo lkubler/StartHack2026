@@ -1,3 +1,6 @@
+#datatype,date,double,long
+#group,false,false,false
+#default,,,
 timestamp,setpoint_position_%,test_number
 1970-01-01T00:00:00Z,0,1
 1970-01-01T00:00:00Z,25,1
