@@ -104,42 +104,6 @@ Ausführung:
     Hersteller (Belimo) erhält wertvolles Feedback zur Produktqualität und kann gezielt verbessern.
     Verbindung zu Daten: Drehmomentprofile, Temperaturverläufe, Stellhäufigkeit werden zu einem Fingerabdruck kombiniert.
 
-🎮 2. Installations-RPG – Gamification für Handwerker
-
-Idee: Eine App, die Installateure bei der Inbetriebnahme durch ein "Quest-System" führt. Der Aktor wird zum Spielcharakter:
-
-    Nach Anschluss führt das Gerät selbstständig Tests durch (Drehmomentmessung, Endlagenerkennung, Dichtheitsprüfung).
-
-    Jeder erfolgreiche Check schaltet ein "Achievement" frei (z.B. "Ventil-Experte").
-
-    Bei Problemen gibt die App Hinweise im Stil eines Rollenspiels: "Das Ventil blockiert – versuche es mit etwas WD-40 (Tipp: Drehmomentkurve zeigt Reibungsspitzen)".
-
-    Installateure können in Bestenlisten gegeneinander antreten oder Firmen erhalten Qualitätsrankings.
-    Mehrwert:
-
-    Spielerisch lernen, Fehler reduzieren, Qualitätssicherung.
-
-    Installateure werden enger an Belimo gebunden (Community-Effekt).
-
-    Daten liefern die Grundlage für die "Quests" (z.B. wird ein ungewöhnliches Drehmomentmuster als verstecktes Easter Egg erkannt).
-
-🧠 3. Selbstlernende Gebäude-Orgel
-
-Idee: Das gesamte HLK-System eines Gebäudes wird als Musikinstrument betrachtet. Jeder Aktor spielt einen Ton, dessen Tonhöhe von der aktuellen Position abhängt, die Lautstärke vom Drehmoment.
-Anwendung:
-
-    Bei der Inbetriebnahme kann der Facility Manager durch das Gebäude gehen und hört, ob alle Aktoren "im Einklang" arbeiten.
-
-    Ein Algorithmus komponiert aus den Live-Daten eine "Gebäudesymphonie" – Abweichungen werden als Dissonanzen hörbar.
-
-    Für die Diagnose: Ein ungewöhnliches Geräusch (z.B. ein quietschender Ton) kann auf mechanische Probleme hinweisen.
-    Mehrwert:
-
-    Völlig neue, intuitive Art der Gebäudeüberwachung – auch für Menschen ohne technisches Verständnis.
-
-    Kann als Kunstinstallation vermarktet werden (z.B. auf Messen).
-
-    Datenbasis: Position → Frequenz, Drehmoment → Amplitude, Temperatur → Klangfarbe.
 
 🔮 4. Prädiktive Wartung als Versicherungsmodell
 
