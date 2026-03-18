@@ -34,6 +34,39 @@ def _init_influx():
 read_client, write_client = _init_influx()
 
 
+def _query_data_frame(query):
+    result = read_client.query_data_frame(query)
+
+    if isinstance(result, list):
+        frames = [frame for frame in result if not frame.empty]
+        if not frames:
+            return pd.DataFrame()
+        df = pd.concat(frames, ignore_index=True)
+    else:
+        df = result
+
+    if df.empty:
+        return pd.DataFrame()
+
+    if "_time" in df.columns:
+        df = df.set_index("_time")
+
+    drop_cols = [col for col in ["result", "table", "_start", "_stop"] if col in df.columns]
+    if drop_cols:
+        df = df.drop(columns=drop_cols)
+
+    df.index.name = "timestamp"
+    return df.sort_index()
+
+
+def _to_rfc3339(dt):
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+    return dt.isoformat().replace("+00:00", "Z")
+
+
 def _influx_write(df, measurement_name):
     write_client.write(
         bucket=bucket,
@@ -55,13 +88,7 @@ def _get_last(measurement):
         |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
     """
 
-    df = (
-        read_client.query_data_frame(query)
-        .set_index("_time")
-        .drop(columns=["result", "table"])
-    )
-    df.index.name = "timestamp"
-    return df
+    return _query_data_frame(query)
 
 
 def _get_last_n(measurement, n):
@@ -76,13 +103,25 @@ def _get_last_n(measurement, n):
         |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
     """
 
-    df = (
-        read_client.query_data_frame(query)
-        .set_index("_time")
-        .drop(columns=["result", "table"])
-    )
-    df.index.name = "timestamp"
-    return df
+    return _query_data_frame(query)
+
+
+def _get_range(measurement_name, start, stop=None):
+    start_str = _to_rfc3339(start)
+    start_clause = f'time(v: "{start_str}")'
+    stop_clause = ""
+    if stop is not None:
+        stop_str = _to_rfc3339(stop)
+        stop_clause = f', stop: time(v: "{stop_str}")'
+
+    query = f'''
+        from(bucket:"{bucket}")
+        |> range(start: {start_clause}{stop_clause})
+        |> filter(fn: (r) => r["_measurement"] == "{measurement_name}")
+        |> drop(columns: ["_start", "_stop"])
+        |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+    '''
+    return _query_data_frame(query)
 
 
 def get_process_data():
@@ -94,6 +133,10 @@ def get_measurement_data(n=1):
         return _get_last_n(measurement, n)
     else:
         return _get_last(measurement)
+
+
+def get_measurement_data_range(start, stop=None):
+    return _get_range(measurement, start, stop)
 
 
 def set_process_data(setpoint_position, test_number=-1):
