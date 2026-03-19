@@ -8,6 +8,7 @@ import altair as alt
 import streamlit as st
 
 from interface.influx.api import get_measurement_data, set_process_data
+from interface.analytics import update_profile, check_anomalies, render_profile_dashboard
 
 PLOT_POINTS = 1500
 PLOT_LOOKBACK = "15m"
@@ -66,6 +67,8 @@ def _init_state():
         st.session_state.last_test_delta = None
     if "last_measurement_df" not in st.session_state:
         st.session_state.last_measurement_df = None
+    if "run_complete" not in st.session_state:
+        st.session_state.run_complete = False
 
 
 def _inject_styles():
@@ -306,6 +309,20 @@ def _stop_controller(message="Controller stopped."):
 def _finish_test(success, message):
     st.session_state.test_status = "passed" if success else "failed"
     st.session_state.test_message = message
+    
+    # Update profile on successful test completion
+    if success and "last_measurement_df" in st.session_state and st.session_state.last_measurement_df is not None:
+        try:
+            update_profile(
+                st.session_state.active_waveform,
+                st.session_state.bias,
+                st.session_state.amp,
+                st.session_state.freq,
+                st.session_state.last_measurement_df,
+            )
+        except Exception as e:
+            logging.warning(f"Failed to update profile: {e}")
+    
     if st.session_state.shuffle_enabled:
         # Repeat test cycles when shuffle is enabled.
         st.session_state.controller_phase = "arming"
@@ -546,6 +563,21 @@ def main():
         plot_df = df.reset_index().sort_values("timestamp")
         _render_metrics(plot_df)
         _render_charts(plot_df)
+        
+        # Check for anomalies
+        anomaly_result = check_anomalies(
+            st.session_state.active_waveform,
+            st.session_state.bias,
+            st.session_state.amp,
+            st.session_state.freq,
+            plot_df,
+        )
+        
+        if anomaly_result["has_anomalies"]:
+            with st.container(border=True):
+                st.error("🚨 Anomalies Detected")
+                for msg in anomaly_result["messages"]:
+                    st.write(msg)
     else:
         st.info("No measurement data available yet. Waiting for data stream...")
 
@@ -566,6 +598,9 @@ def main():
     except Exception as exc:
         logging.warning(f"Controller step failed (non-critical): {exc}")
         # Don't crash on write failures - just log and continue
+
+    # Show profiling dashboard
+    render_profile_dashboard()
 
     if st.session_state.live_refresh:
         time.sleep(REFRESH_SECONDS)
