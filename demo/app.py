@@ -1,4 +1,5 @@
 import importlib.util
+import random
 import time
 from pathlib import Path
 
@@ -10,6 +11,11 @@ from interface.influx.api import get_measurement_data, set_process_data
 PLOT_POINTS = 1000
 PLOT_LOOKBACK = "15m"
 REFRESH_SECONDS = 0.8
+ARMING_SECONDS = 2.5
+TEST_TIMEOUT_SECONDS = 8.0
+TEST_TOLERANCE_PERCENT = 7.0
+SHUFFLE_INTERVAL_SECONDS = 6.0
+WAVE_OPTIONS = ["constant", "sine", "triangle", "square"]
 
 _waveform_path = Path(__file__).resolve().parent / "signal" / "waveform.py"
 _waveform_spec = importlib.util.spec_from_file_location("local_waveform", _waveform_path)
@@ -31,6 +37,32 @@ def _init_state():
         st.session_state.amp = 40.0
     if "live_refresh" not in st.session_state:
         st.session_state.live_refresh = True
+    if "run_mode" not in st.session_state:
+        st.session_state.run_mode = "run"
+    if "shuffle_enabled" not in st.session_state:
+        st.session_state.shuffle_enabled = False
+    if "controller_active" not in st.session_state:
+        st.session_state.controller_active = False
+    if "controller_phase" not in st.session_state:
+        st.session_state.controller_phase = "idle"
+    if "active_waveform" not in st.session_state:
+        st.session_state.active_waveform = st.session_state.waveform
+    if "arming_setpoint" not in st.session_state:
+        st.session_state.arming_setpoint = float(st.session_state.bias)
+    if "arming_until_ts" not in st.session_state:
+        st.session_state.arming_until_ts = 0.0
+    if "last_wave_change_ts" not in st.session_state:
+        st.session_state.last_wave_change_ts = 0.0
+    if "test_deadline_ts" not in st.session_state:
+        st.session_state.test_deadline_ts = 0.0
+    if "test_status" not in st.session_state:
+        st.session_state.test_status = "idle"
+    if "test_message" not in st.session_state:
+        st.session_state.test_message = "No test started yet."
+    if "last_command_setpoint" not in st.session_state:
+        st.session_state.last_command_setpoint = None
+    if "last_test_delta" not in st.session_state:
+        st.session_state.last_test_delta = None
 
 
 def _inject_styles():
@@ -218,14 +250,127 @@ def _render_header():
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-def _write_process_setpoint():
+def _feedback_from_df(df):
+    if df is None or df.empty or "feedback_position_%" not in df.columns:
+        return None
+    value = df.iloc[-1]["feedback_position_%"]
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _pick_next_waveform(current_waveform):
+    if not st.session_state.shuffle_enabled:
+        return st.session_state.waveform
+    candidates = [wave for wave in WAVE_OPTIONS if wave != current_waveform]
+    if not candidates:
+        return st.session_state.waveform
+    return random.choice(candidates)
+
+
+def _start_controller(mode, latest_feedback):
+    now = time.time()
+    st.session_state.controller_active = True
+    st.session_state.controller_phase = "arming"
+    st.session_state.run_mode = mode
+    st.session_state.arming_until_ts = now + ARMING_SECONDS
+    st.session_state.arming_setpoint = (
+        float(latest_feedback) if latest_feedback is not None else float(st.session_state.bias)
+    )
+    st.session_state.active_waveform = st.session_state.waveform
+    st.session_state.last_wave_change_ts = now
+    st.session_state.last_command_setpoint = None
+    st.session_state.last_test_delta = None
+
+    if mode == "test":
+        st.session_state.test_status = "running"
+        st.session_state.test_message = "Test started. Arming actuator before verification."
+        st.session_state.test_deadline_ts = 0.0
+    else:
+        st.session_state.test_status = "idle"
+        st.session_state.test_message = "Run mode active."
+        st.session_state.test_deadline_ts = 0.0
+
+
+def _stop_controller(message="Controller stopped."):
+    st.session_state.controller_active = False
+    st.session_state.controller_phase = "idle"
+    if st.session_state.run_mode == "test":
+        st.session_state.test_message = message
+
+
+def _finish_test(success, message):
+    st.session_state.test_status = "passed" if success else "failed"
+    st.session_state.test_message = message
+    if st.session_state.shuffle_enabled:
+        # Repeat test cycles when shuffle is enabled.
+        st.session_state.controller_phase = "arming"
+        st.session_state.arming_until_ts = time.time() + ARMING_SECONDS
+        st.session_state.arming_setpoint = float(st.session_state.bias)
+        st.session_state.active_waveform = _pick_next_waveform(st.session_state.active_waveform)
+        st.session_state.test_status = "running"
+        st.session_state.test_message = "Starting next shuffled test cycle."
+        st.session_state.test_deadline_ts = 0.0
+    else:
+        _stop_controller(message)
+
+
+def _control_step(latest_feedback):
+    if not st.session_state.controller_active:
+        return
+
+    now = time.time()
+
+    if st.session_state.controller_phase == "arming":
+        set_process_data(float(st.session_state.arming_setpoint))
+        st.session_state.last_command_setpoint = float(st.session_state.arming_setpoint)
+        if now >= st.session_state.arming_until_ts:
+            st.session_state.controller_phase = "active"
+            st.session_state.last_wave_change_ts = now
+            if st.session_state.shuffle_enabled:
+                st.session_state.active_waveform = _pick_next_waveform(st.session_state.active_waveform)
+            else:
+                st.session_state.active_waveform = st.session_state.waveform
+            if st.session_state.run_mode == "test":
+                st.session_state.test_deadline_ts = now + TEST_TIMEOUT_SECONDS
+                st.session_state.test_status = "running"
+                st.session_state.test_message = "Testing waveform response..."
+        return
+
+    if st.session_state.shuffle_enabled and (now - st.session_state.last_wave_change_ts) >= SHUFFLE_INTERVAL_SECONDS:
+        st.session_state.active_waveform = _pick_next_waveform(st.session_state.active_waveform)
+        st.session_state.last_wave_change_ts = now
+
     setpoint_position = compute_setpoint(
-        st.session_state.waveform,
+        st.session_state.active_waveform,
         st.session_state.freq,
         st.session_state.bias,
         st.session_state.amp,
     )
+    st.session_state.last_command_setpoint = float(setpoint_position)
     set_process_data(setpoint_position)
+
+    if st.session_state.run_mode != "test":
+        return
+
+    if latest_feedback is None:
+        if now >= st.session_state.test_deadline_ts > 0:
+            _finish_test(False, "Test failed: no feedback available before timeout.")
+        return
+
+    delta = abs(float(latest_feedback) - float(setpoint_position))
+    st.session_state.last_test_delta = delta
+    if delta <= TEST_TOLERANCE_PERCENT:
+        _finish_test(
+            True,
+            f"Test passed: |feedback - setpoint| = {delta:.2f} <= {TEST_TOLERANCE_PERCENT:.1f}",
+        )
+    elif now >= st.session_state.test_deadline_ts > 0:
+        _finish_test(
+            False,
+            f"Test failed: delta {delta:.2f} > {TEST_TOLERANCE_PERCENT:.1f} at timeout.",
+        )
 
 
 def _render_metrics(df):
@@ -279,27 +424,22 @@ def _render_charts(df):
 def _render_controls():
     st.markdown("<div class='section-header'>Waveform Controls</div>", unsafe_allow_html=True)
     with st.container(border=True):
-        c1, c2 = st.columns([1.5, 1.2])
+        c1, c2 = st.columns([1.45, 1.0])
         with c1:
-            st.session_state.live_refresh = st.toggle(
-                "Live updates",
-                value=st.session_state.live_refresh,
+            st.session_state.waveform = st.radio(
+                "Waveform type",
+                WAVE_OPTIONS,
+                horizontal=True,
+                index=WAVE_OPTIONS.index(st.session_state.waveform),
             )
         with c2:
-            st.session_state.waveform = st.radio(
-                "Waveform",
-                ["constant", "sine", "triangle", "square"],
-                horizontal=True,
-                index=["constant", "sine", "triangle", "square"].index(st.session_state.waveform),
+            st.session_state.freq = st.number_input(
+                "Frequency (Hz)",
+                value=float(st.session_state.freq),
+                min_value=0.0,
+                step=0.005,
+                format="%.5f",
             )
-
-        st.session_state.freq = st.number_input(
-            "Frequency (Hz)",
-            value=float(st.session_state.freq),
-            min_value=0.0,
-            step=0.005,
-            format="%.5f",
-        )
 
         r1, r2 = st.columns(2)
         with r1:
@@ -319,6 +459,59 @@ def _render_controls():
                 step=0.5,
             )
 
+        u1, u2 = st.columns([1.0, 1.0])
+        with u1:
+            st.session_state.live_refresh = st.toggle(
+                "Live updates",
+                value=st.session_state.live_refresh,
+            )
+        with u2:
+            st.session_state.shuffle_enabled = st.toggle(
+                "Repeat with shuffled waveforms",
+                value=st.session_state.shuffle_enabled,
+                help="When enabled, waveform type rotates automatically.",
+            )
+
+        is_active = st.session_state.controller_active
+        action_cols = st.columns(3)
+        if action_cols[0].button(
+            "Start Run",
+            use_container_width=True,
+            type="secondary" if is_active else "primary",
+            help="Continuous waveform control until you press Stop.",
+        ):
+            st.session_state._control_action = "start_run"
+        if action_cols[1].button(
+            "Run Test",
+            use_container_width=True,
+            help="Single verification run with simple pass/fail check.",
+        ):
+            st.session_state._control_action = "start_test"
+        if action_cols[2].button(
+            "Stop",
+            use_container_width=True,
+            type="primary" if is_active else "secondary",
+        ):
+            st.session_state._control_action = "stop"
+
+        if is_active:
+            if st.session_state.controller_phase == "arming":
+                st.info("Preparing actuator to a safe starting point before execution.")
+            else:
+                st.success(f"Running: {st.session_state.active_waveform} waveform")
+        else:
+            st.info("Controller is stopped. Set values and press Start Run or Run Test.")
+
+        if st.session_state.last_command_setpoint is not None:
+            st.caption(f"Last command setpoint: {st.session_state.last_command_setpoint:.2f} %")
+
+        if st.session_state.test_status == "passed":
+            st.success(st.session_state.test_message)
+        elif st.session_state.test_status == "failed":
+            st.error(st.session_state.test_message)
+        elif st.session_state.test_status == "running":
+            st.info(st.session_state.test_message)
+
 
 def main():
     st.set_page_config(
@@ -330,11 +523,6 @@ def main():
     _init_state()
     _inject_styles()
     _render_header()
-
-    try:
-        _write_process_setpoint()
-    except Exception as exc:
-        st.error(f"Failed to write process data: {exc}")
 
     try:
         df = get_measurement_data(n=PLOT_POINTS, lookback=PLOT_LOOKBACK)
@@ -349,7 +537,23 @@ def main():
     else:
         st.info("No measurement data available yet. Waiting for data stream...")
 
+    latest_feedback = _feedback_from_df(plot_df) if df is not None and not df.empty else None
+
     _render_controls()
+
+    control_action = st.session_state.pop("_control_action", None)
+    if control_action == "start_run":
+        _start_controller("run", latest_feedback)
+    elif control_action == "start_test":
+        _start_controller("test", latest_feedback)
+    elif control_action == "stop":
+        _stop_controller("Stopped by user.")
+
+    try:
+        _control_step(latest_feedback)
+    except Exception as exc:
+        st.error(f"Failed to execute controller step: {exc}")
+        _stop_controller("Controller stopped due to write error.")
 
     if st.session_state.live_refresh:
         time.sleep(REFRESH_SECONDS)
