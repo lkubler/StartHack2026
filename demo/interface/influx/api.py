@@ -10,7 +10,7 @@ import random
 #  W-Lan
 url = "http://192.168.3.14:8086"
 # Lan
-url = "http://192.168.5.14:8086"
+# url = "http://192.168.5.14:8086"
 
 token = "pf-OGC6AQFmKy64gOzRM12DZrCuavnWeMgRZ2kDMOk8LYK22evDJnoyKGcmY49EgT8HnMDE9GPQeg30vXeHsRQ=="
 verify_ssl = False
@@ -28,7 +28,7 @@ JITTER_FACTOR = 0.1      # Minimal jitter
 
 _influx_client = None
 _last_connection_check = 0
-_connection_check_interval = 30  # Check connectivity every 30 seconds
+_connection_check_interval = 1  # Check connectivity every 30 seconds
 _last_measurement_cache: Optional[pd.DataFrame] = None
 _last_measurement_cache_time = 0
 
