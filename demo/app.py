@@ -67,7 +67,9 @@ def _inject_styles():
         .block-container {
             max-width: 1320px;
             padding-top: 1.5rem;
-            padding-bottom: 2rem;
+            padding-bottom: 2.4rem;
+            padding-left: clamp(1.05rem, 2.6vw, 2rem);
+            padding-right: clamp(1.05rem, 2.6vw, 2rem);
         }
 
         h1, h2, h3 {
@@ -83,7 +85,19 @@ def _inject_styles():
             backdrop-filter: blur(14px);
             -webkit-backdrop-filter: blur(14px);
             box-shadow: 0 10px 34px rgba(0, 0, 0, 0.35);
-            padding: 1.05rem 1.2rem;
+            padding: 1.15rem 1.3rem;
+        }
+
+        .top-row-card {
+            height: 100%;
+            min-height: 126px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        .header-row {
+            margin-bottom: 0.8rem;
         }
 
         .hero-title {
@@ -113,6 +127,19 @@ def _inject_styles():
             font-weight: 700;
         }
 
+        .compact-status-card {
+            gap: 0.2rem;
+        }
+
+        .compact-status-card .mini-label {
+            margin-bottom: 0.15rem;
+        }
+
+        .compact-status-card .mini-value {
+            font-size: 1.05rem;
+            line-height: 1.2;
+        }
+
         [data-testid="stMetric"] {
             border: 1px solid var(--glass-border);
             background: linear-gradient(150deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.04));
@@ -135,11 +162,43 @@ def _inject_styles():
         }
 
         .section-header {
-            margin-top: 1.2rem;
-            margin-bottom: 0.7rem;
+            margin-top: 1.45rem;
+            margin-bottom: 0.85rem;
             color: #dbe9ff;
             font-size: 1.25rem;
             font-family: "Space Grotesk", sans-serif;
+        }
+
+        div[data-testid="stVerticalBlock"] > div:has(> div[data-testid="stMetric"]) {
+            margin-top: 0.3rem;
+            margin-bottom: 0.35rem;
+        }
+
+        @media (max-width: 900px) {
+            .block-container {
+                padding-top: 1.1rem;
+                padding-bottom: 1.7rem;
+                padding-left: 1rem;
+                padding-right: 1rem;
+            }
+
+            div[data-testid="stColumn"] {
+                margin-bottom: 0.95rem;
+            }
+
+            .glass {
+                padding: 1.05rem 1.05rem;
+                border-radius: 16px;
+            }
+
+            .header-row {
+                margin-bottom: 1rem;
+            }
+
+            .section-header {
+                margin-top: 1.2rem;
+                margin-bottom: 0.75rem;
+            }
         }
         </style>
         """,
@@ -148,29 +207,17 @@ def _inject_styles():
 
 
 def _render_header():
-    left, right = st.columns([3.5, 1.5], vertical_alignment="center")
-    with left:
-        st.markdown(
-            """
-            <div class="glass">
-                <p class="hero-title">Belimo Actuator Sensor Dashboard</p>
-                <p class="hero-subtitle">Live telemetry, process setpoint generation, and waveform control in one view.</p>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with right:
-        st.markdown(
-            f"""
-            <div class="glass">
-                <div class="mini-label">Live Refresh</div>
-                <div class="mini-value">{'ON' if st.session_state.live_refresh else 'OFF'}</div>
-                <div class="mini-label" style="margin-top:0.5rem;">Lookback</div>
-                <div class="mini-value">{PLOT_LOOKBACK}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    st.markdown('<div class="header-row">', unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div class="glass top-row-card">
+            <p class="hero-title">Belimo Actuator Sensor Dashboard</p>
+            <p class="hero-subtitle">Live telemetry, process setpoint generation, and waveform control in one view.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def _write_process_setpoint():
