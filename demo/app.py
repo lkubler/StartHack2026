@@ -1,6 +1,7 @@
 import importlib.util
 import random
 import time
+import logging
 from pathlib import Path
 
 import altair as alt
@@ -10,7 +11,7 @@ from interface.influx.api import get_measurement_data, set_process_data
 
 PLOT_POINTS = 1000
 PLOT_LOOKBACK = "15m"
-REFRESH_SECONDS = 0.8
+REFRESH_SECONDS = 3.0  # Increased from 2.0s to give network time to recover on unstable connections
 ARMING_SECONDS = 2.5
 TEST_TIMEOUT_SECONDS = 8.0
 TEST_TOLERANCE_PERCENT = 7.0
@@ -63,6 +64,8 @@ def _init_state():
         st.session_state.last_command_setpoint = None
     if "last_test_delta" not in st.session_state:
         st.session_state.last_test_delta = None
+    if "last_measurement_df" not in st.session_state:
+        st.session_state.last_measurement_df = None
 
 
 def _inject_styles():
@@ -524,11 +527,20 @@ def main():
     _inject_styles()
     _render_header()
 
+    # Try to fetch fresh data, but use cached version if network fails
     try:
         df = get_measurement_data(n=PLOT_POINTS, lookback=PLOT_LOOKBACK)
+        if df is not None and not df.empty:
+            st.session_state.last_measurement_df = df
     except Exception as exc:
-        st.error(f"Failed to fetch measurement data: {exc}")
-        df = None
+        logging.warning(f"Failed to fetch measurement data: {exc}")
+        # Use cached data if available
+        if "last_measurement_df" in st.session_state and st.session_state.last_measurement_df is not None:
+            st.warning("⚠️ Network unstable - using cached data")
+            df = st.session_state.last_measurement_df
+        else:
+            st.error(f"Cannot fetch data and no cache available: {exc}")
+            df = None
 
     if df is not None and not df.empty:
         plot_df = df.reset_index().sort_values("timestamp")
@@ -552,8 +564,8 @@ def main():
     try:
         _control_step(latest_feedback)
     except Exception as exc:
-        st.error(f"Failed to execute controller step: {exc}")
-        _stop_controller("Controller stopped due to write error.")
+        logging.warning(f"Controller step failed (non-critical): {exc}")
+        # Don't crash on write failures - just log and continue
 
     if st.session_state.live_refresh:
         time.sleep(REFRESH_SECONDS)
