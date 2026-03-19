@@ -9,7 +9,7 @@ import logging
 import sys
 import numpy as np
 import pandas as pd
-from typing import Dict, Tuple, Optional
+from typing import Dict, Optional
 import streamlit as st
 
 # Configure logging to stderr
@@ -28,6 +28,7 @@ if not _logger.handlers:
 POWER_PERCENTILE_THRESHOLD = 95  # Flag if power > 95th percentile of baseline
 TORQUE_PERCENTILE_THRESHOLD = 90  # Flag if torque > 90th percentile
 MIN_SAMPLES_FOR_PROFILE = 20  # Need at least 20 samples to build a profile
+MOVEMENT_HISTORY_LIMIT = 100
 
 
 def _get_profile_key(waveform: str, bias: float, amplitude: float, frequency: float) -> str:
@@ -43,6 +44,194 @@ def _init_profile_state():
         st.session_state._anomaly_log = []
     if "_profile_stats" not in st.session_state:
         st.session_state._profile_stats = {}
+    if "_movement_log" not in st.session_state:
+        st.session_state._movement_log = []
+
+
+def detect_movement_churn(
+    df: pd.DataFrame,
+    waveform: str,
+    movement_delta_threshold_pct: float,
+    max_moves_per_minute: float,
+    min_direction_changes: int,
+    oscillation_band_pct: float,
+    ignore_expected_oscillation: bool,
+) -> Dict[str, object]:
+    """Detect excessive movement and short-interval back-and-forth oscillation."""
+    _init_profile_state()
+
+    result = {
+        "has_issue": False,
+        "suppressed": False,
+        "reason": "",
+        "moves": 0,
+        "moves_per_min": 0.0,
+        "direction_changes": 0,
+        "median_step": 0.0,
+        "range_pct": 0.0,
+        "messages": [],
+        "suggestions": [],
+    }
+
+    if df is None or df.empty:
+        result["reason"] = "No data available"
+        return result
+
+    if "feedback_position_%" not in df.columns:
+        result["reason"] = "Missing feedback_position_% column"
+        return result
+
+    if "timestamp" not in df.columns:
+        result["reason"] = "Missing timestamp column"
+        return result
+
+    if ignore_expected_oscillation and waveform in {"sine", "triangle", "square"}:
+        result["suppressed"] = True
+        result["reason"] = f"Waveform '{waveform}' intentionally oscillates"
+        return result
+
+    work = df[["timestamp", "feedback_position_%"]].dropna().copy()
+    if len(work) < 4:
+        result["reason"] = "Not enough samples"
+        return result
+
+    work = work.sort_values("timestamp")
+    work["timestamp"] = pd.to_datetime(work["timestamp"], errors="coerce")
+    work = work.dropna(subset=["timestamp"])
+    if len(work) < 4:
+        result["reason"] = "Not enough valid timestamps"
+        return result
+
+    deltas = work["feedback_position_%"].diff().fillna(0.0)
+    abs_deltas = deltas.abs()
+    move_mask = abs_deltas >= float(movement_delta_threshold_pct)
+    moves = int(move_mask.sum())
+
+    duration_s = float((work["timestamp"].iloc[-1] - work["timestamp"].iloc[0]).total_seconds())
+    if duration_s <= 0:
+        result["reason"] = "Invalid time span"
+        return result
+
+    moves_per_min = moves / (duration_s / 60.0)
+    result["moves"] = moves
+    result["moves_per_min"] = moves_per_min
+    result["median_step"] = float(abs_deltas[move_mask].median()) if moves > 0 else 0.0
+    result["range_pct"] = float(work["feedback_position_%"].max() - work["feedback_position_%"].min())
+
+    # Count direction flips between meaningful steps to detect chatter/hunting.
+    signed_steps = np.sign(deltas[move_mask].to_numpy())
+    signed_steps = signed_steps[signed_steps != 0]
+    if len(signed_steps) > 1:
+        direction_changes = int(np.sum(signed_steps[1:] != signed_steps[:-1]))
+    else:
+        direction_changes = 0
+    result["direction_changes"] = direction_changes
+
+    too_many_moves = moves_per_min > float(max_moves_per_minute)
+    chatter_like = (
+        direction_changes >= int(min_direction_changes)
+        and result["median_step"] <= float(oscillation_band_pct)
+    )
+
+    if too_many_moves:
+        result["has_issue"] = True
+        result["messages"].append(
+            (
+                "Excessive movement rate: "
+                f"{moves_per_min:.1f} moves/min (threshold {max_moves_per_minute:.1f})"
+            )
+        )
+
+    if chatter_like:
+        result["has_issue"] = True
+        result["messages"].append(
+            (
+                "Chatter / close-state oscillation detected: "
+                f"{direction_changes} direction changes with median step {result['median_step']:.2f}%"
+            )
+        )
+
+    if result["has_issue"]:
+        result["suggestions"] = [
+            "Add a deadband/hysteresis around the target (ignore tiny corrections).",
+            "Rate-limit setpoint updates and avoid command toggling every refresh.",
+            "Use minimum dwell time before allowing direction reversals.",
+        ]
+
+        movement_event = {
+            "timestamp": pd.Timestamp.now(),
+            "waveform": waveform,
+            "moves": moves,
+            "moves_per_min": moves_per_min,
+            "direction_changes": direction_changes,
+            "median_step_pct": result["median_step"],
+            "range_pct": result["range_pct"],
+        }
+        st.session_state._movement_log.append(movement_event)
+        st.session_state._movement_log = st.session_state._movement_log[-MOVEMENT_HISTORY_LIMIT:]
+
+        _logger.warning(
+            "MOVEMENT CHURN | waveform=%s | moves=%s | moves/min=%.2f | dir_changes=%s | median_step=%.2f%%",
+            waveform,
+            moves,
+            moves_per_min,
+            direction_changes,
+            result["median_step"],
+        )
+        for msg in result["messages"]:
+            _logger.warning("  %s", msg)
+
+    return result
+
+
+def render_movement_report(result: Dict[str, object]) -> None:
+    """Render movement optimization report in the dashboard."""
+    st.markdown("<div class='section-header'>Movement Optimization Report</div>", unsafe_allow_html=True)
+
+    if not result:
+        st.info("Movement detector has no result yet.")
+        return
+
+    if result.get("suppressed"):
+        st.info(f"Movement detector paused: {result.get('reason', 'suppressed')}.")
+        return
+
+    reason = result.get("reason", "")
+    if reason and not result.get("has_issue"):
+        st.info(f"Movement detector: {reason}.")
+        return
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Moves", str(result.get("moves", 0)))
+    c2.metric("Moves/Min", f"{float(result.get('moves_per_min', 0.0)):.1f}")
+    c3.metric("Direction Changes", str(result.get("direction_changes", 0)))
+    c4.metric("Median Step (%)", f"{float(result.get('median_step', 0.0)):.2f}")
+
+    if result.get("has_issue"):
+        st.error("Sensor movement appears overactive and likely optimizable.")
+        for msg in result.get("messages", []):
+            st.write(f"- {msg}")
+        st.caption("Suggested control optimizations:")
+        for tip in result.get("suggestions", []):
+            st.write(f"- {tip}")
+    else:
+        st.success("Movement behavior looks stable for current thresholds.")
+
+    if st.session_state._movement_log:
+        hist = pd.DataFrame(st.session_state._movement_log).tail(12).copy()
+        hist["timestamp"] = pd.to_datetime(hist["timestamp"], errors="coerce").dt.strftime("%H:%M:%S")
+        hist = hist.rename(
+            columns={
+                "timestamp": "Time",
+                "waveform": "Waveform",
+                "moves": "Moves",
+                "moves_per_min": "Moves/Min",
+                "direction_changes": "Dir Changes",
+                "median_step_pct": "Median Step %",
+                "range_pct": "Range %",
+            }
+        )
+        st.dataframe(hist, use_container_width=True, hide_index=True)
 
 
 def update_profile(

@@ -8,7 +8,13 @@ import altair as alt
 import streamlit as st
 
 from interface.influx.api import get_measurement_data, set_process_data
-from interface.analytics import update_profile, check_anomalies, render_profile_dashboard
+from interface.analytics import (
+    update_profile,
+    check_anomalies,
+    render_profile_dashboard,
+    detect_movement_churn,
+    render_movement_report,
+)
 
 PLOT_POINTS = 1500
 PLOT_LOOKBACK = "15m"
@@ -69,6 +75,16 @@ def _init_state():
         st.session_state.last_measurement_df = None
     if "run_complete" not in st.session_state:
         st.session_state.run_complete = False
+    if "movement_delta_threshold_pct" not in st.session_state:
+        st.session_state.movement_delta_threshold_pct = 0.35
+    if "movement_max_per_min" not in st.session_state:
+        st.session_state.movement_max_per_min = 16.0
+    if "movement_min_direction_changes" not in st.session_state:
+        st.session_state.movement_min_direction_changes = 10
+    if "movement_oscillation_band_pct" not in st.session_state:
+        st.session_state.movement_oscillation_band_pct = 1.2
+    if "movement_ignore_expected_waveforms" not in st.session_state:
+        st.session_state.movement_ignore_expected_waveforms = True
 
 
 def _inject_styles():
@@ -532,6 +548,52 @@ def _render_controls():
         elif st.session_state.test_status == "running":
             st.info(st.session_state.test_message)
 
+        st.markdown("---")
+        st.subheader("Movement Detection")
+        m1, m2 = st.columns(2)
+        with m1:
+            st.session_state.movement_delta_threshold_pct = st.number_input(
+                "Movement event threshold (%)",
+                min_value=0.05,
+                max_value=5.0,
+                value=float(st.session_state.movement_delta_threshold_pct),
+                step=0.05,
+                format="%.2f",
+                help="Minimum change in feedback position to count as a movement event.",
+            )
+            st.session_state.movement_max_per_min = st.number_input(
+                "Max allowed moves per minute",
+                min_value=1.0,
+                max_value=300.0,
+                value=float(st.session_state.movement_max_per_min),
+                step=1.0,
+                format="%.1f",
+            )
+        with m2:
+            st.session_state.movement_min_direction_changes = st.number_input(
+                "Direction-change trigger (count)",
+                min_value=2,
+                max_value=500,
+                value=int(st.session_state.movement_min_direction_changes),
+                step=1,
+                help="Minimum number of back-and-forth reversals to classify chatter.",
+            )
+            st.session_state.movement_oscillation_band_pct = st.number_input(
+                "Small-step oscillation band (%)",
+                min_value=0.05,
+                max_value=10.0,
+                value=float(st.session_state.movement_oscillation_band_pct),
+                step=0.05,
+                format="%.2f",
+                help="Upper bound for median step size when identifying close-state oscillation.",
+            )
+
+        st.session_state.movement_ignore_expected_waveforms = st.toggle(
+            "Ignore expected oscillation waveforms (sine/triangle/square)",
+            value=bool(st.session_state.movement_ignore_expected_waveforms),
+            help="Keeps detector focused on unintended movement churn during non-oscillating operation.",
+        )
+
 
 def main():
     st.set_page_config(
@@ -578,8 +640,19 @@ def main():
                 st.error("🚨 Anomalies Detected")
                 for msg in anomaly_result["messages"]:
                     st.write(msg)
+
+        movement_result = detect_movement_churn(
+            plot_df,
+            st.session_state.active_waveform,
+            st.session_state.movement_delta_threshold_pct,
+            st.session_state.movement_max_per_min,
+            st.session_state.movement_min_direction_changes,
+            st.session_state.movement_oscillation_band_pct,
+            st.session_state.movement_ignore_expected_waveforms,
+        )
     else:
         st.info("No measurement data available yet. Waiting for data stream...")
+        movement_result = {}
 
     latest_feedback = _feedback_from_df(plot_df) if df is not None and not df.empty else None
 
@@ -601,6 +674,7 @@ def main():
 
     # Show profiling dashboard
     render_profile_dashboard()
+    render_movement_report(movement_result)
 
     if st.session_state.live_refresh:
         time.sleep(REFRESH_SECONDS)
