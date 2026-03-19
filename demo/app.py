@@ -21,8 +21,6 @@ compute_setpoint = _waveform_module.compute_setpoint
 
 
 def _init_state():
-    if "test_number" not in st.session_state:
-        st.session_state.test_number = -1
     if "waveform" not in st.session_state:
         st.session_state.waveform = "constant"
     if "bias" not in st.session_state:
@@ -227,7 +225,7 @@ def _write_process_setpoint():
         st.session_state.bias,
         st.session_state.amp,
     )
-    set_process_data(setpoint_position, test_number=st.session_state.test_number)
+    set_process_data(setpoint_position)
 
 
 def _render_metrics(df):
@@ -281,14 +279,8 @@ def _render_charts(df):
 def _render_controls():
     st.markdown("<div class='section-header'>Waveform Controls</div>", unsafe_allow_html=True)
     with st.container(border=True):
-        c1, c2, c3 = st.columns([1.2, 1.5, 1.2])
+        c1, c2 = st.columns([1.5, 1.2])
         with c1:
-            st.session_state.test_number = st.number_input(
-                "Test Number",
-                value=int(st.session_state.test_number),
-                step=1,
-                format="%d",
-            )
             st.session_state.live_refresh = st.toggle(
                 "Live updates",
                 value=st.session_state.live_refresh,
@@ -300,14 +292,14 @@ def _render_controls():
                 horizontal=True,
                 index=["constant", "sine", "triangle", "square"].index(st.session_state.waveform),
             )
-        with c3:
-            st.session_state.freq = st.number_input(
-                "Frequency (Hz)",
-                value=float(st.session_state.freq),
-                min_value=0.0,
-                step=0.005,
-                format="%.5f",
-            )
+
+        st.session_state.freq = st.number_input(
+            "Frequency (Hz)",
+            value=float(st.session_state.freq),
+            min_value=0.0,
+            step=0.005,
+            format="%.5f",
+        )
 
         r1, r2 = st.columns(2)
         with r1:
