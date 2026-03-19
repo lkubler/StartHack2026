@@ -8,7 +8,7 @@ import importlib.util
 
 from interface.influx.api import set_process_data, get_measurement_data
 
-PLOT_POINTS = 100
+PLOT_POINTS = 1000
 PLOT_LOOKBACK = "15m"
 
 _waveform_path = Path(__file__).resolve().parent / "signal" / "waveform.py"
@@ -93,4 +93,3 @@ while True:
         .encode(x=st.session_state.x, y=st.session_state.y)
     )
     chart_placeholder.altair_chart(chart, width="stretch")
-    time.sleep(0.5)

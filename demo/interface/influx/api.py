@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime, timezone
+import time
 import pandas as pd
 from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import SYNCHRONOUS, WritePrecision
@@ -11,6 +12,7 @@ org = "belimo"
 bucket = "actuator-data"
 measurement = "measurements"
 process = "_process"
+influx_timeout_ms = 2000
 
 
 timestamp = datetime.fromtimestamp(0, tz=timezone.utc)
@@ -23,6 +25,7 @@ def _init_influx():
         token=token,
         org=org,
         verify_ssl=verify_ssl,
+        timeout=influx_timeout_ms,
     )
     read_client = influx_client.query_api()
     # synchronous write for near real-time behavior
@@ -32,6 +35,27 @@ def _init_influx():
 
 
 read_client, write_client = _init_influx()
+
+
+def _query_data_frame_with_retry(query, max_retries=100, delay_seconds=0.1):
+    last_exception = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            return read_client.query_data_frame(query)
+        except Exception as exc:
+            last_exception = exc
+            logging.warning(
+                "Influx query failed (attempt %s/%s): %s",
+                attempt,
+                max_retries,
+                exc,
+            )
+            if attempt < max_retries:
+                time.sleep(delay_seconds)
+
+    raise RuntimeError(
+        f"Influx query failed after {max_retries} attempts"
+    ) from last_exception
 
 
 def _influx_write(df, measurement_name):
@@ -56,7 +80,7 @@ def _get_last(measurement):
     """
 
     df = (
-        read_client.query_data_frame(query)
+        _query_data_frame_with_retry(query)
         .set_index("_time")
         .drop(columns=["result", "table"])
     )
@@ -87,7 +111,7 @@ def _get_last_n(measurement, n, lookback="15m"):
     """
 
     df = (
-        read_client.query_data_frame(query)
+        _query_data_frame_with_retry(query)
         .set_index("_time")
         .drop(columns=["result", "table"])
     )
