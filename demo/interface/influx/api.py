@@ -7,7 +7,11 @@ from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import SYNCHRONOUS, WritePrecision
 import random
 
+#  W-Lan
 url = "http://192.168.3.14:8086"
+# Lan
+url = "http://192.168.5.14:8086"
+
 token = "pf-OGC6AQFmKy64gOzRM12DZrCuavnWeMgRZ2kDMOk8LYK22evDJnoyKGcmY49EgT8HnMDE9GPQeg30vXeHsRQ=="
 verify_ssl = False
 org = "belimo"
@@ -17,7 +21,7 @@ process = "_process"
 
 # IMPROVED timeout and retry configuration
 influx_timeout_ms = 3000  # Shorter timeout = fail fast
-MAX_RETRIES = 2          # Only 2 retries max (fail fast on unstable networks)
+MAX_RETRIES = 10          # Only 2 retries max (fail fast on unstable networks)
 INITIAL_BACKOFF = 0.2    # Start with 200ms only
 MAX_BACKOFF = 0.5        # Cap at 500ms max
 JITTER_FACTOR = 0.1      # Minimal jitter
