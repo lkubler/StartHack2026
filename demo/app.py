@@ -9,9 +9,9 @@ import streamlit as st
 
 from interface.influx.api import get_measurement_data, set_process_data
 
-PLOT_POINTS = 1000
+PLOT_POINTS = 1500
 PLOT_LOOKBACK = "15m"
-REFRESH_SECONDS = 3.0  # Increased from 2.0s to give network time to recover on unstable connections
+REFRESH_SECONDS = 3.0  # Increased from 2.0s to`` give network time to recover on unstable connections
 ARMING_SECONDS = 2.5
 TEST_TIMEOUT_SECONDS = 8.0
 TEST_TOLERANCE_PERCENT = 7.0
